@@ -1,0 +1,769 @@
+{
+	"info": {
+		"_postman_id": "4c08171c-ccf5-4d7e-a956-386169d6978a",
+		"name": "Fiber Runner",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+		"_exporter_id": "19687635"
+	},
+	"item": [
+		{
+			"name": "1. Create Cart",
+			"event": [
+				{
+					"listen": "prerequest",
+					"script": {
+						"exec": [
+							"// Clear any previous cart ID to avoid conflicts\r",
+							"pm.environment.unset(\"cart_id\");\r",
+							""
+						],
+						"type": "text/javascript",
+						"packages": {}
+					}
+				},
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"const response = pm.response.json();\r",
+							"if (response && response.cart && response.cart.cart_id) {\r",
+							"    pm.environment.set(\"cart_id\", response.cart.cart_id);\r",
+							"    pm.environment.set(\"customer_id\", response.cart.customer_id);\r",
+							"} else {\r",
+							"    pm.environment.unset(\"cart_id\");\r",
+							"    pm.environment.unset(\"customer_id\");\r",
+							"}\r",
+							"\r",
+							"\r",
+							"pm.test(\"Status code is 200\", function () {\r",
+							"    pm.response.to.have.status(200);\r",
+							"});\r",
+							"\r",
+							"// Check if cart is created and the cart_id is returned\r",
+							"pm.test(\"Cart is created and cart_id exists\", function () {\r",
+							"    pm.expect(response.cart).to.have.property(\"cart_id\");\r",
+							"});\r",
+							"\r",
+							"// Store cart_id in the environment for subsequent requests\r",
+							"pm.environment.set(\"cart_id\", response.cart.cart_id);\r",
+							"\r",
+							"// Check if the response includes the correct customer_id\r",
+							"pm.test(\"Correct customer ID in cart\", function () {\r",
+							"    pm.expect(response.cart.customer_id).to.eql(pm.environment.get(\"customer_id\"));\r",
+							"});\r",
+							"\r",
+							"// Ensure cart items are present\r",
+							"pm.test(\"Cart contains items\", function () {\r",
+							"    pm.expect(response.cart.items).to.be.an(\"array\").that.is.not.empty;\r",
+							"});\r",
+							""
+						],
+						"type": "text/javascript",
+						"packages": {}
+					}
+				}
+			],
+			"request": {
+				"method": "POST",
+				"header": [],
+				"body": {
+					"mode": "raw",
+					"raw": "{\r\n  \"customer_id\": \"cust_001\",\r\n  \"items\": [\r\n    {\r\n      \"item_id\": \"item001\",\r\n      \"name\": \"Laptop\",\r\n      \"quantity\": 1,\r\n      \"price\": 1000\r\n    },\r\n    {\r\n      \"item_id\": \"item002\",\r\n      \"name\": \"Mouse\",\r\n      \"quantity\": 2,\r\n      \"price\": 50\r\n    }\r\n  ]\r\n}\r\n",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "{{baseUrl}}/create-cart",
+					"host": [
+						"{{baseUrl}}"
+					],
+					"path": [
+						"create-cart"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "2. Process a payment for an order",
+			"event": [
+				{
+					"listen": "prerequest",
+					"script": {
+						"exec": [
+							"const cart_id = pm.environment.get(\"cart_id\");\r",
+							"if (!cart_id) {\r",
+							"    throw new Error(\"Cart ID not found. Please ensure a cart was created before processing payment.\");\r",
+							"}\r",
+							"\r",
+							"pm.environment.set(\"order_id\", \"SO\" + Math.floor(Math.random() * 100000000));\r",
+							"\r",
+							""
+						],
+						"type": "text/javascript",
+						"packages": {}
+					}
+				},
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"const response = pm.response.json();\r",
+							"if (response && response.order && response.order.ID) {\r",
+							"    pm.environment.set(\"order_id\", response.order.ID);\r",
+							"    pm.environment.set(\"order_status\", response.order.Status);\r",
+							"} else {\r",
+							"    pm.environment.unset(\"order_id\");\r",
+							"    pm.environment.unset(\"order_status\");\r",
+							"}\r",
+							"\r",
+							"// Check if the status code is 200\r",
+							"pm.test(\"Status code is 200\", function () {\r",
+							"    pm.response.to.have.status(200);\r",
+							"});\r",
+							"\r",
+							"// Check if the payment status is \"Payment Processed\"\r",
+							"pm.test(\"Payment status is 'Payment Processed'\", function () {\r",
+							"    pm.expect(response.order.Status).to.eql(\"Payment Processed\");\r",
+							"});\r",
+							"\r",
+							""
+						],
+						"type": "text/javascript",
+						"packages": {}
+					}
+				}
+			],
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Accept",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\r\n    \"order_id\": \"SO46243158\",\r\n    \"amount\": 1100,\r\n    \"billing_address\": {\r\n        \"customer_id\": \"{{customer_id}}\",\r\n        \"name\": \"John Doe\",\r\n        \"email\": \"john.doe@example.com\",\r\n        \"phone\": \"+1234567890\",\r\n        \"address\": \"123 Main St\",\r\n        \"city\": \"New York\",\r\n        \"postal_code\": \"10001\",\r\n        \"country\": \"USA\"\r\n    }\r\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "{{baseUrl}}/process-payment",
+					"host": [
+						"{{baseUrl}}"
+					],
+					"path": [
+						"process-payment"
+					]
+				}
+			},
+			"response": [
+				{
+					"name": "Order created successfully",
+					"originalRequest": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Accept",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/create-order?order_id=<string>",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"create-order"
+							],
+							"query": [
+								{
+									"key": "order_id",
+									"value": "<string>"
+								}
+							]
+						}
+					},
+					"status": "OK",
+					"code": 200,
+					"_postman_previewlanguage": "json",
+					"header": [
+						{
+							"key": "Content-Type",
+							"value": "application/json"
+						}
+					],
+					"cookie": [],
+					"body": "{\n  \"message\": \"<string>\",\n  \"order\": {\n    \"ID\": \"<string>\",\n    \"Status\": \"<string>\",\n    \"Amount\": \"<number>\",\n    \"Fulfilled\": \"<boolean>\",\n    \"PaymentDone\": \"<boolean>\",\n    \"Customer\": {\n      \"ID\": \"<string>\",\n      \"Name\": \"<string>\",\n      \"Email\": \"<string>\",\n      \"Phone\": \"<string>\"\n    },\n    \"ProcessedBy\": \"<string>\"\n  }\n}"
+				},
+				{
+					"name": "Invalid order ID or payment not completed",
+					"originalRequest": {
+						"method": "POST",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/create-order?order_id=<string>",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"create-order"
+							],
+							"query": [
+								{
+									"key": "order_id",
+									"value": "<string>"
+								}
+							]
+						}
+					},
+					"status": "Bad Request",
+					"code": 400,
+					"_postman_previewlanguage": "text",
+					"header": [
+						{
+							"key": "Content-Type",
+							"value": "text/plain"
+						}
+					],
+					"cookie": [],
+					"body": ""
+				}
+			]
+		},
+		{
+			"name": "3. Route the order to fulfillment centers",
+			"event": [
+				{
+					"listen": "prerequest",
+					"script": {
+						"exec": [
+							"const order_id = pm.environment.get(\"order_id\");\r",
+							"if (!order_id) {\r",
+							"    throw new Error(\"Order ID not found. Ensure an order was created before routing.\");\r",
+							"}\r",
+							""
+						],
+						"type": "text/javascript",
+						"packages": {}
+					}
+				},
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"const response = pm.response.json();\r",
+							"if (response && response.order && response.order.ID) {\r",
+							"    pm.environment.set(\"order_id\", response.order.ID);\r",
+							"    pm.environment.set(\"order_status\", response.order.Status);\r",
+							"} else {\r",
+							"    pm.environment.unset(\"order_id\");\r",
+							"    pm.environment.unset(\"order_status\");\r",
+							"}\r",
+							"\r",
+							"pm.test(\"Status code is 200\", function () {\r",
+							"    pm.response.to.have.status(200);\r",
+							"});\r",
+							"\r",
+							"// Ensure the order status is 'Order Routed'\r",
+							"pm.test(\"Order status is 'Order Routed'\", function () {\r",
+							"    pm.expect(response.order.Status).to.eql(\"Order Routed\");\r",
+							"});\r",
+							""
+						],
+						"type": "text/javascript",
+						"packages": {}
+					}
+				}
+			],
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Accept",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\r\n  \"order_id\": \"{{order_id}}\"\r\n}\r\n",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "{{baseUrl}}/route-order",
+					"host": [
+						"{{baseUrl}}"
+					],
+					"path": [
+						"route-order"
+					],
+					"query": [
+						{
+							"key": "order_id",
+							"value": "SO24090001",
+							"description": "(Required) The ID of the order.",
+							"disabled": true
+						},
+						{
+							"key": "amount",
+							"value": "100000",
+							"description": "(Required) The amount to be authorized.",
+							"disabled": true
+						},
+						{
+							"key": "customer_id",
+							"value": "cust001",
+							"disabled": true
+						},
+						{
+							"key": "customer_name",
+							"value": "John Doe",
+							"disabled": true
+						},
+						{
+							"key": "customer_email",
+							"value": "john.doe@example.com",
+							"disabled": true
+						},
+						{
+							"key": "customer_phone",
+							"value": "+1234567890",
+							"disabled": true
+						}
+					]
+				},
+				"description": "Process the payment and authorize the amount for the given order."
+			},
+			"response": [
+				{
+					"name": "Payment successfully processed",
+					"originalRequest": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Accept",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/process-payment?order_id=<string>&amount=<number>",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"process-payment"
+							],
+							"query": [
+								{
+									"key": "order_id",
+									"value": "<string>"
+								},
+								{
+									"key": "amount",
+									"value": "<number>"
+								}
+							]
+						}
+					},
+					"status": "OK",
+					"code": 200,
+					"_postman_previewlanguage": "json",
+					"header": [
+						{
+							"key": "Content-Type",
+							"value": "application/json"
+						}
+					],
+					"cookie": [],
+					"body": "{\n  \"message\": \"<string>\",\n  \"order\": {\n    \"ID\": \"<string>\",\n    \"Status\": \"<string>\",\n    \"Amount\": \"<number>\",\n    \"Fulfilled\": \"<boolean>\",\n    \"PaymentDone\": \"<boolean>\",\n    \"Customer\": {\n      \"ID\": \"<string>\",\n      \"Name\": \"<string>\",\n      \"Email\": \"<string>\",\n      \"Phone\": \"<string>\"\n    },\n    \"ProcessedBy\": \"<string>\"\n  }\n}"
+				},
+				{
+					"name": "Invalid parameters",
+					"originalRequest": {
+						"method": "POST",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/process-payment?order_id=<string>&amount=<number>",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"process-payment"
+							],
+							"query": [
+								{
+									"key": "order_id",
+									"value": "<string>"
+								},
+								{
+									"key": "amount",
+									"value": "<number>"
+								}
+							]
+						}
+					},
+					"status": "Bad Request",
+					"code": 400,
+					"_postman_previewlanguage": "text",
+					"header": [
+						{
+							"key": "Content-Type",
+							"value": "text/plain"
+						}
+					],
+					"cookie": [],
+					"body": ""
+				}
+			]
+		},
+		{
+			"name": "4. Fulfill an order from store or DC",
+			"event": [
+				{
+					"listen": "prerequest",
+					"script": {
+						"exec": [
+							"const order_id = pm.environment.get(\"order_id\");\r",
+							"if (!order_id) {\r",
+							"    throw new Error(\"Order ID not found. Ensure the order was routed before fulfilling.\");\r",
+							"}\r",
+							""
+						],
+						"type": "text/javascript",
+						"packages": {}
+					}
+				},
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"const response = pm.response.json();\r",
+							"if (response && response.order && response.order.Status) {\r",
+							"    pm.environment.set(\"fulfillment_status\", response.order.Status);\r",
+							"} else {\r",
+							"    pm.environment.unset(\"fulfillment_status\");\r",
+							"}\r",
+							"\r",
+							"\r",
+							"// Ensure the order http status code 200\r",
+							"pm.test(\"Status code is 200\", function () {\r",
+							"    pm.response.to.have.status(200);\r",
+							"});\r",
+							"\r",
+							"// Ensure the order status is 'Fulfillment Completed'\r",
+							"pm.test(\"Order status is 'Fulfillment Completed'\", function () {\r",
+							"    pm.expect(response.order.Status).to.eql(\"Fulfillment Completed\");\r",
+							"});\r",
+							""
+						],
+						"type": "text/javascript",
+						"packages": {}
+					}
+				}
+			],
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Accept",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\r\n  \"order_id\": \"{{order_id}}\",\r\n  \"fulfillment_center\": \"store\" // or \"dc\" for distribution center\r\n}\r\n",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "{{baseUrl}}/fulfill-order",
+					"host": [
+						"{{baseUrl}}"
+					],
+					"path": [
+						"fulfill-order"
+					],
+					"query": [
+						{
+							"key": "order_id",
+							"value": "<string>",
+							"description": "(Required) The ID of the order.",
+							"disabled": true
+						}
+					]
+				}
+			},
+			"response": [
+				{
+					"name": "Order fulfilled successfully",
+					"originalRequest": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Accept",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/fulfill-order?order_id=<string>",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"fulfill-order"
+							],
+							"query": [
+								{
+									"key": "order_id",
+									"value": "<string>"
+								}
+							]
+						}
+					},
+					"status": "OK",
+					"code": 200,
+					"_postman_previewlanguage": "json",
+					"header": [
+						{
+							"key": "Content-Type",
+							"value": "application/json"
+						}
+					],
+					"cookie": [],
+					"body": "{\n  \"message\": \"<string>\",\n  \"order\": {\n    \"ID\": \"<string>\",\n    \"Status\": \"<string>\",\n    \"Amount\": \"<number>\",\n    \"Fulfilled\": \"<boolean>\",\n    \"PaymentDone\": \"<boolean>\",\n    \"Customer\": {\n      \"ID\": \"<string>\",\n      \"Name\": \"<string>\",\n      \"Email\": \"<string>\",\n      \"Phone\": \"<string>\"\n    },\n    \"ProcessedBy\": \"<string>\"\n  }\n}"
+				},
+				{
+					"name": "Invalid order or order not routed",
+					"originalRequest": {
+						"method": "POST",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/fulfill-order?order_id=<string>",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"fulfill-order"
+							],
+							"query": [
+								{
+									"key": "order_id",
+									"value": "<string>"
+								}
+							]
+						}
+					},
+					"status": "Bad Request",
+					"code": 400,
+					"_postman_previewlanguage": "text",
+					"header": [
+						{
+							"key": "Content-Type",
+							"value": "text/plain"
+						}
+					],
+					"cookie": [],
+					"body": ""
+				}
+			]
+		},
+		{
+			"name": "5. Capture payment after order fulfillment",
+			"event": [
+				{
+					"listen": "prerequest",
+					"script": {
+						"exec": [
+							"const order_id = pm.environment.get(\"order_id\");\r",
+							"const fulfillment_status = pm.environment.get(\"fulfillment_status\");\r",
+							"\r",
+							"if (!order_id || fulfillment_status !== \"Fulfillment Completed\") {\r",
+							"    throw new Error(\"Order ID not found or fulfillment not completed. Capture payment cannot proceed.\");\r",
+							"}\r",
+							""
+						],
+						"type": "text/javascript",
+						"packages": {}
+					}
+				},
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"const response = pm.response.json();\r",
+							"if (response && response.order && response.order.Status) {\r",
+							"    pm.environment.set(\"payment_status\", response.order.Status);\r",
+							"} else {\r",
+							"    pm.environment.unset(\"payment_status\");\r",
+							"}\r",
+							"\r",
+							"\r",
+							"pm.test(\"Status code is 200\", function () {\r",
+							"    pm.response.to.have.status(200);\r",
+							"});\r",
+							"\r",
+							"// Ensure the order status is 'Payment Captured'\r",
+							"pm.test(\"Order status is 'Payment Captured'\", function () {\r",
+							"    pm.expect(response.order.Status).to.eql(\"Payment Captured\");\r",
+							"});\r",
+							""
+						],
+						"type": "text/javascript",
+						"packages": {}
+					}
+				}
+			],
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Accept",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\r\n  \"order_id\": \"{{order_id}}\"\r\n}\r\n",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "{{baseUrl}}/capture-payment",
+					"host": [
+						"{{baseUrl}}"
+					],
+					"path": [
+						"capture-payment"
+					],
+					"query": [
+						{
+							"key": "order_id",
+							"value": "<string>",
+							"description": "(Required) The ID of the order.",
+							"disabled": true
+						}
+					]
+				}
+			},
+			"response": [
+				{
+					"name": "Payment captured successfully",
+					"originalRequest": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Accept",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/capture-payment?order_id=<string>",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"capture-payment"
+							],
+							"query": [
+								{
+									"key": "order_id",
+									"value": "<string>"
+								}
+							]
+						}
+					},
+					"status": "OK",
+					"code": 200,
+					"_postman_previewlanguage": "json",
+					"header": [
+						{
+							"key": "Content-Type",
+							"value": "application/json"
+						}
+					],
+					"cookie": [],
+					"body": "{\n  \"message\": \"<string>\",\n  \"order\": {\n    \"ID\": \"<string>\",\n    \"Status\": \"<string>\",\n    \"Amount\": \"<number>\",\n    \"Fulfilled\": \"<boolean>\",\n    \"PaymentDone\": \"<boolean>\",\n    \"Customer\": {\n      \"ID\": \"<string>\",\n      \"Name\": \"<string>\",\n      \"Email\": \"<string>\",\n      \"Phone\": \"<string>\"\n    },\n    \"ProcessedBy\": \"<string>\"\n  }\n}"
+				},
+				{
+					"name": "Order not yet fulfilled",
+					"originalRequest": {
+						"method": "POST",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/capture-payment?order_id=<string>",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"capture-payment"
+							],
+							"query": [
+								{
+									"key": "order_id",
+									"value": "<string>"
+								}
+							]
+						}
+					},
+					"status": "Bad Request",
+					"code": 400,
+					"_postman_previewlanguage": "text",
+					"header": [
+						{
+							"key": "Content-Type",
+							"value": "text/plain"
+						}
+					],
+					"cookie": [],
+					"body": ""
+				}
+			]
+		}
+	],
+	"event": [
+		{
+			"listen": "prerequest",
+			"script": {
+				"type": "text/javascript",
+				"packages": {},
+				"exec": [
+					""
+				]
+			}
+		},
+		{
+			"listen": "test",
+			"script": {
+				"type": "text/javascript",
+				"packages": {},
+				"exec": [
+					""
+				]
+			}
+		}
+	],
+	"variable": [
+		{
+			"key": "baseUrl",
+			"value": "http://127.0.0.1:3000",
+			"type": "string"
+		}
+	]
+}

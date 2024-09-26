@@ -1,0 +1,245 @@
+openapi: "3.1.0"
+info:
+  title: Fiber Order Workflow API
+  description: This API simulates an order workflow with payment, routing, fulfillment, and refund handling based on a BPMN workflow.
+  version: 1.0.0
+servers:
+  - url: http://localhost:3000
+    description: Local development server
+
+paths:
+  /process-payment:
+    post:
+      summary: Process a payment for an order
+      description: Process the payment and authorize the amount for the given order.
+      parameters:
+        - name: order_id
+          in: query
+          required: true
+          schema:
+            type: string
+          description: The ID of the order.
+        - name: amount
+          in: query
+          required: true
+          schema:
+            type: number
+          description: The amount to be authorized.
+      responses:
+        200:
+          description: Payment successfully processed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  order:
+                    $ref: '#/components/schemas/Order'
+        400:
+          description: Invalid parameters
+          
+  /create-order:
+    post:
+      summary: Create an order after payment is authorized
+      parameters:
+        - name: order_id
+          in: query
+          required: true
+          schema:
+            type: string
+          description: The ID of the order to be created.
+      responses:
+        200:
+          description: Order created successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  order:
+                    $ref: '#/components/schemas/Order'
+        400:
+          description: Invalid order ID or payment not completed
+
+  /wait-grace-period:
+    get:
+      summary: Wait for the grace period before proceeding
+      parameters:
+        - name: order_id
+          in: query
+          required: true
+          schema:
+            type: string
+          description: The ID of the order.
+      responses:
+        200:
+          description: Grace period completed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  order:
+                    $ref: '#/components/schemas/Order'
+
+  /route-order:
+    post:
+      summary: Route the order to fulfillment centers
+      parameters:
+        - name: order_id
+          in: query
+          required: true
+          schema:
+            type: string
+          description: The ID of the order.
+      responses:
+        200:
+          description: Order routed successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  order:
+                    $ref: '#/components/schemas/Order'
+        400:
+          description: Routing failed
+
+  /fulfill-order:
+    post:
+      summary: Fulfill an order from store or DC
+      parameters:
+        - name: order_id
+          in: query
+          required: true
+          schema:
+            type: string
+          description: The ID of the order.
+      responses:
+        200:
+          description: Order fulfilled successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  order:
+                    $ref: '#/components/schemas/Order'
+        400:
+          description: Invalid order or order not routed
+
+  /capture-payment:
+    post:
+      summary: Capture payment after order fulfillment
+      parameters:
+        - name: order_id
+          in: query
+          required: true
+          schema:
+            type: string
+          description: The ID of the order.
+      responses:
+        200:
+          description: Payment captured successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  order:
+                    $ref: '#/components/schemas/Order'
+        400:
+          description: Order not yet fulfilled
+
+  /refund-payment:
+    post:
+      summary: Refund payment after order cancellation
+      parameters:
+        - name: order_id
+          in: query
+          required: true
+          schema:
+            type: string
+          description: The ID of the order.
+      responses:
+        200:
+          description: Payment refunded successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  order:
+                    $ref: '#/components/schemas/Order'
+        400:
+          description: Payment not processed
+
+  /cancel-order:
+    post:
+      summary: Cancel an order
+      parameters:
+        - name: order_id
+          in: query
+          required: true
+          schema:
+            type: string
+          description: The ID of the order to cancel.
+      responses:
+        200:
+          description: Order cancelled successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  order:
+                    $ref: '#/components/schemas/Order'
+
+components:
+  schemas:
+    Order:
+      type: object
+      properties:
+        ID:
+          type: string
+        Status:
+          type: string
+        Amount:
+          type: number
+        Fulfilled:
+          type: boolean
+        PaymentDone:
+          type: boolean
+        Customer:
+          $ref: '#/components/schemas/CustomerInfo'
+        ProcessedBy:
+          type: string
+
+    CustomerInfo:
+      type: object
+      properties:
+        ID:
+          type: string
+        Name:
+          type: string
+        Email:
+          type: string
+        Phone:
+          type: string
+
