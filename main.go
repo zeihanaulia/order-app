@@ -95,6 +95,554 @@ type CartRequest struct {
 // In-memory order storage (for demo purposes)
 var orders = make(map[string]*Order)
 
+func CreateCartHandler(c *fiber.Ctx) error {
+	var cartReq CartRequest
+
+	// Parse the JSON input for cart creation
+	if err := c.BodyParser(&cartReq); err != nil {
+		log.Warn().Msg("Invalid JSON input for /create-cart")
+		return c.Status(400).JSON(fiber.Map{
+			"error": fiber.Map{
+				"code":    "InvalidRequest",
+				"message": "Invalid JSON payload",
+			},
+		})
+	}
+
+	// Validate cart input
+	if cartReq.CustomerID == "" || len(cartReq.Items) == 0 {
+		log.Warn().Msg("Customer ID or items missing in /create-cart request")
+		return c.Status(400).JSON(fiber.Map{
+			"error": fiber.Map{
+				"code":    "InvalidRequest",
+				"message": "Customer ID and items are required",
+			},
+		})
+	}
+
+	// Create or update the cart for the customer
+	carts[cartReq.CustomerID] = &Cart{
+		CartID:     uuid.New().String(),
+		CustomerID: cartReq.CustomerID,
+		Items:      cartReq.Items,
+	}
+
+	log.Info().Str("event.action", "create_cart").
+		Str("customer.id", cartReq.CustomerID).
+		Msg("Cart created successfully")
+
+	return c.JSON(fiber.Map{
+		"message": "Cart created successfully",
+		"cart":    carts[cartReq.CustomerID],
+	})
+}
+
+func ProcessPaymentHandler(c *fiber.Ctx) error {
+	var paymentReq PaymentRequest
+
+	// Parse JSON input
+	if err := c.BodyParser(&paymentReq); err != nil {
+		log.Warn().Msg("Invalid JSON input for /process-payment")
+		return c.Status(400).JSON(fiber.Map{
+			"error": fiber.Map{
+				"code":    "InvalidRequest",
+				"message": "Invalid JSON payload",
+			},
+		})
+	}
+
+	// Validate payment input
+	if paymentReq.Amount <= 0 ||
+		paymentReq.BillingAddress.CustomerID == "" ||
+		paymentReq.BillingAddress.Name == "" ||
+		paymentReq.BillingAddress.Email == "" ||
+		paymentReq.BillingAddress.Phone == "" {
+		log.Warn().Msg("Invalid parameters for /process-payment")
+		return c.Status(400).JSON(fiber.Map{
+			"error": fiber.Map{
+				"code":    "InvalidRequest",
+				"message": "Billing details and valid amount are required",
+			},
+		})
+	}
+
+	// Retrieve cart associated with the billing address
+	cart, exists := carts[paymentReq.BillingAddress.CustomerID]
+	if !exists {
+		log.Warn().Msgf("Cart for customer ID %s not found", paymentReq.BillingAddress.CustomerID)
+		return c.Status(404).JSON(fiber.Map{
+			"error": fiber.Map{
+				"code":    "CartNotFound",
+				"message": "Cart for the given customer ID not found",
+			},
+		})
+	}
+
+	// Calculate total cart amount
+	var totalAmount float64
+	for _, item := range cart.Items {
+		totalAmount += float64(item.Quantity) * item.Price
+	}
+
+	// Check if the total amount matches the payment amount
+	if totalAmount != paymentReq.Amount {
+		log.Warn().Msgf("Payment amount mismatch: expected %.2f, received %.2f", totalAmount, paymentReq.Amount)
+		return c.Status(400).JSON(fiber.Map{
+			"error": fiber.Map{
+				"code":    "AmountMismatch",
+				"message": "The payment amount does not match the total cart amount",
+			},
+		})
+	}
+
+	// If amounts match, process payment (In real-world scenario, integrate with payment gateway)
+	log.Info().Str("event.action", "process_payment").
+		Str("customer.id", paymentReq.BillingAddress.CustomerID).
+		Float64("amount", paymentReq.Amount).
+		Msg("Payment processed successfully")
+
+	// Create the order after successful payment
+	orderID := paymentReq.OrderID // Example, should be unique
+
+	// Convert cart.Items (of type []Item) to []OrderItem
+	orderItems := make([]OrderItem, len(cart.Items))
+	for i, item := range cart.Items {
+		orderItems[i] = OrderItem{
+			ItemID:   item.ItemID,
+			Name:     item.Name,
+			Quantity: item.Quantity,
+			Price:    item.Price,
+		}
+	}
+
+	orders[orderID] = &Order{
+		ID:          orderID,
+		Status:      "Payment Processed",
+		Amount:      totalAmount,
+		Items:       orderItems, // Use the converted orderItems
+		PaymentDone: true,
+		Customer:    paymentReq.BillingAddress,
+		ProcessedBy: "System",
+	}
+
+	return c.JSON(fiber.Map{
+		"message": "Payment processed successfully and order created",
+		"order":   orders[orderID],
+	})
+}
+
+func WaitGracePeriodHandler(c *fiber.Ctx) error {
+	// Get the order ID from the query parameter
+	orderID := c.Query("order_id")
+	if orderID == "" {
+		return c.Status(400).JSON(fiber.Map{
+			"error": fiber.Map{
+				"code":    "InvalidRequest",
+				"message": "Order ID is required",
+			},
+		})
+	}
+
+	// Check if order exists
+	order, exists := orders[orderID]
+	if !exists {
+		return c.Status(404).JSON(fiber.Map{
+			"error": fiber.Map{
+				"code":    "OrderNotFound",
+				"message": "Order not found",
+			},
+		})
+	}
+
+	// Simulate a grace period (e.g., 5 seconds)
+	log.Info().Str("order.id", orderID).Msg("Starting grace period for order")
+	time.Sleep(5 * time.Second) // You can change this to a configurable time
+
+	// Update the order status after grace period
+	order.Status = "Grace Period Completed"
+
+	log.Info().Str("order.id", orderID).Msg("Grace period completed for order")
+
+	// Return the updated order
+	return c.JSON(fiber.Map{
+		"message": "Grace period completed, order ready for routing",
+		"order":   order,
+	})
+}
+
+func RouteOrderHandler(c *fiber.Ctx) error {
+	// Parse JSON input
+	var payload map[string]string
+	if err := c.BodyParser(&payload); err != nil {
+		log.Warn().Msg("Invalid JSON input")
+		return c.Status(400).JSON(fiber.Map{
+			"error": fiber.Map{
+				"code":    "InvalidRequest",
+				"message": "Invalid JSON payload",
+			},
+		})
+	}
+
+	orderID := payload["order_id"]
+	if orderID == "" {
+		log.Warn().Msg("Order ID is missing in the route order request")
+		return c.Status(400).JSON(fiber.Map{
+			"error": fiber.Map{
+				"code":    "MissingOrderID",
+				"message": "Order ID is required to route the order.",
+			},
+		})
+	}
+
+	// Check if order exists
+	order, exists := orders[orderID]
+	if !exists {
+		log.Warn().Msgf("Order ID %s not found", orderID)
+		return c.Status(404).JSON(fiber.Map{
+			"error": fiber.Map{
+				"code":    "OrderNotFound",
+				"message": "The order ID provided does not exist.",
+				"target":  "order_id",
+				"details": fiber.Map{
+					"order_id": orderID,
+				},
+			},
+		})
+	}
+
+	// Simulate routing success or failure
+	success := true // This would be replaced by real routing logic
+	if success {
+		order.Status = "Order Routed"
+		log.Info().Msgf("Order ID %s successfully routed", orderID)
+		return c.JSON(fiber.Map{
+			"message": "Order routed",
+			"order":   order,
+		})
+	} else {
+		order.Status = "Routing Failed"
+		log.Warn().Msgf("Routing failed for Order ID %s", orderID)
+		return c.JSON(fiber.Map{
+			"message": "Routing failed, items on hold",
+			"order":   order,
+		})
+	}
+}
+
+func FullfillOrderHandler(c *fiber.Ctx) error {
+	// Parse JSON input
+	var payload map[string]string
+	if err := c.BodyParser(&payload); err != nil {
+		log.Warn().Msg("Invalid JSON input for fulfillment")
+		return c.Status(400).JSON(fiber.Map{
+			"error": fiber.Map{
+				"code":    "InvalidRequest",
+				"message": "Invalid JSON payload",
+			},
+		})
+	}
+
+	orderID := payload["order_id"]
+	if orderID == "" {
+		log.Warn().Msg("Order ID is missing for fulfillment")
+		return c.Status(400).JSON(fiber.Map{
+			"error": fiber.Map{
+				"code":    "MissingOrderID",
+				"message": "Order ID is required to process fulfillment.",
+			},
+		})
+	}
+
+	// Check if order exists and has been routed
+	order, exists := orders[orderID]
+	if !exists {
+		log.Warn().Msgf("Order ID %s not found for fulfillment", orderID)
+		return c.Status(404).JSON(fiber.Map{
+			"error": fiber.Map{
+				"code":    "OrderNotFound",
+				"message": "The order ID provided does not exist.",
+				"target":  "order_id",
+			},
+		})
+	}
+
+	// Ensure the order has been routed before fulfillment
+	if order.Status != "Order Routed" {
+		log.Warn().Msgf("Order ID %s has not been routed", orderID)
+		return c.Status(400).JSON(fiber.Map{
+			"error": fiber.Map{
+				"code":    "OrderNotRouted",
+				"message": "The order must be routed before fulfillment.",
+				"target":  "order_id",
+			},
+		})
+	}
+
+	// Simulate fulfillment
+	order.Status = "Fulfillment Completed"
+	order.Fulfilled = true
+
+	// Log successful fulfillment
+	log.Info().
+		Str("event.action", "fulfill_order").
+		Str("order.id", orderID).
+		Msg("Order fulfilled successfully")
+
+	return c.JSON(fiber.Map{
+		"message": "Order fulfilled",
+		"order":   order,
+	})
+}
+
+func CapturePaymentHandler(c *fiber.Ctx) error {
+	// Parse JSON input
+	var payload map[string]string
+	if err := c.BodyParser(&payload); err != nil {
+		log.Warn().Msg("Invalid JSON input for payment capture")
+		return c.Status(400).JSON(fiber.Map{
+			"error": fiber.Map{
+				"code":    "InvalidRequest",
+				"message": "Invalid JSON payload",
+			},
+		})
+	}
+
+	orderID := payload["order_id"]
+	if orderID == "" {
+		log.Warn().Msg("Order ID is missing for payment capture")
+		return c.Status(400).JSON(fiber.Map{
+			"error": fiber.Map{
+				"code":    "MissingOrderID",
+				"message": "Order ID is required to capture the payment.",
+			},
+		})
+	}
+
+	// Check if order exists
+	order, exists := orders[orderID]
+	if !exists {
+		log.Warn().Msgf("Order ID %s not found for payment capture", orderID)
+		return c.Status(404).JSON(fiber.Map{
+			"error": fiber.Map{
+				"code":    "OrderNotFound",
+				"message": "The order ID provided does not exist.",
+				"target":  "order_id",
+			},
+		})
+	}
+
+	// Ensure the order is fulfilled before capturing payment
+	if !order.Fulfilled {
+		log.Warn().Msgf("Order ID %s has not been fulfilled yet", orderID)
+		return c.Status(400).JSON(fiber.Map{
+			"error": fiber.Map{
+				"code":    "OrderNotFulfilled",
+				"message": "The order must be fulfilled before capturing payment.",
+				"target":  "order_id",
+			},
+		})
+	}
+
+	// Capture the payment
+	order.Status = "Payment Captured"
+	order.PaymentDone = true
+
+	// Log successful payment capture
+	log.Info().
+		Str("event.action", "capture_payment").
+		Str("order.id", orderID).
+		Msg("Payment captured successfully")
+
+	return c.JSON(fiber.Map{
+		"message": "Payment captured",
+		"order":   order,
+	})
+}
+
+func RefundPaymentHandler(c *fiber.Ctx) error {
+	// Parse JSON input
+	var payload map[string]string
+	if err := c.BodyParser(&payload); err != nil {
+		log.Warn().Msg("Invalid JSON input for refund payment")
+		return c.Status(400).JSON(fiber.Map{
+			"error": fiber.Map{
+				"code":    "InvalidRequest",
+				"message": "Invalid JSON payload",
+			},
+		})
+	}
+
+	orderID := payload["order_id"]
+	if orderID == "" {
+		log.Warn().Msg("Order ID is missing for refund payment")
+		return c.Status(400).JSON(fiber.Map{
+			"error": fiber.Map{
+				"code":    "MissingOrderID",
+				"message": "Order ID is required to process the refund.",
+			},
+		})
+	}
+
+	// Check if order exists
+	order, exists := orders[orderID]
+	if !exists {
+		log.Warn().Msgf("Order ID %s not found for refund", orderID)
+		return c.Status(404).JSON(fiber.Map{
+			"error": fiber.Map{
+				"code":    "OrderNotFound",
+				"message": "The order ID provided does not exist.",
+				"target":  "order_id",
+			},
+		})
+	}
+
+	// Check if payment has been made and the refund has not already been processed
+	if !order.PaymentDone {
+		log.Warn().Msgf("Payment was not processed for Order ID %s", orderID)
+		return c.Status(400).JSON(fiber.Map{
+			"error": fiber.Map{
+				"code":    "PaymentNotProcessed",
+				"message": "Payment has not been processed for this order.",
+				"target":  "order_id",
+			},
+		})
+	}
+
+	if order.Refunded {
+		log.Warn().Msgf("Payment has already been refunded for Order ID %s", orderID)
+		return c.Status(400).JSON(fiber.Map{
+			"error": fiber.Map{
+				"code":    "PaymentAlreadyRefunded",
+				"message": "Payment has already been refunded for this order.",
+				"target":  "order_id",
+			},
+		})
+	}
+
+	// Refund the payment
+	order.Status = "Payment Refunded"
+	order.Refunded = true
+
+	// Log successful refund
+	log.Info().
+		Str("event.action", "refund_payment").
+		Str("order.id", orderID).
+		Msg("Payment refunded successfully")
+
+	return c.JSON(fiber.Map{
+		"message": "Payment refunded",
+		"order":   order,
+	})
+}
+
+func CancelOrderHandler(c *fiber.Ctx) error {
+	// Parse JSON input
+	var payload map[string]string
+	if err := c.BodyParser(&payload); err != nil {
+		log.Warn().Msg("Invalid JSON input for order cancellation")
+		return c.Status(400).JSON(fiber.Map{
+			"error": fiber.Map{
+				"code":    "InvalidRequest",
+				"message": "Invalid JSON payload",
+			},
+		})
+	}
+
+	orderID := payload["order_id"]
+	if orderID == "" {
+		log.Warn().Msg("Order ID is missing for cancellation")
+		return c.Status(400).JSON(fiber.Map{
+			"error": fiber.Map{
+				"code":    "MissingOrderID",
+				"message": "Order ID is required to cancel the order.",
+			},
+		})
+	}
+
+	// Check if order exists
+	order, exists := orders[orderID]
+	if !exists {
+		log.Warn().Msgf("Order ID %s not found for cancellation", orderID)
+		return c.Status(404).JSON(fiber.Map{
+			"error": fiber.Map{
+				"code":    "OrderNotFound",
+				"message": "The order ID provided does not exist.",
+				"target":  "order_id",
+			},
+		})
+	}
+
+	// Check if order is already fulfilled or cancelled
+	if order.Fulfilled {
+		log.Warn().Msgf("Order ID %s has already been fulfilled and cannot be cancelled", orderID)
+		return c.Status(400).JSON(fiber.Map{
+			"error": fiber.Map{
+				"code":    "OrderAlreadyFulfilled",
+				"message": "The order has already been fulfilled and cannot be cancelled.",
+				"target":  "order_id",
+			},
+		})
+	}
+
+	if order.Cancelled {
+		log.Warn().Msgf("Order ID %s has already been cancelled", orderID)
+		return c.Status(400).JSON(fiber.Map{
+			"error": fiber.Map{
+				"code":    "OrderAlreadyCancelled",
+				"message": "The order has already been cancelled.",
+				"target":  "order_id",
+			},
+		})
+	}
+
+	// Cancel the order
+	order.Status = "Order Cancelled"
+	order.Cancelled = true
+
+	// Log successful cancellation
+	log.Info().
+		Str("event.action", "cancel_order").
+		Str("order.id", orderID).
+		Msg("Order cancelled successfully")
+
+	return c.JSON(fiber.Map{
+		"message": "Order cancelled",
+		"order":   order,
+	})
+}
+
+func GetOrdersHandler(c *fiber.Ctx) error {
+	// If no orders are available, return an empty list
+	if len(orders) == 0 {
+		log.Info().Msg("No orders available")
+		return c.JSON(fiber.Map{
+			"message": "No orders found",
+			"orders":  []Order{},
+		})
+	}
+
+	// Return all the orders in a JSON response
+	log.Info().Msg("Fetching all orders")
+	return c.JSON(fiber.Map{
+		"message": "All orders retrieved successfully",
+		"orders":  orders,
+	})
+}
+
+// setupRoutes sets up the necessary routes for the application
+func setupRoutes(app *fiber.App) {
+	app.Post("/create-cart", CreateCartHandler)
+	app.Post("/process-payment", ProcessPaymentHandler)
+	app.Get("/wait-grace-period", WaitGracePeriodHandler)
+	app.Post("/route-order", RouteOrderHandler)
+	app.Post("/fulfill-order", FullfillOrderHandler)
+	app.Post("/capture-payment", CapturePaymentHandler)
+	app.Post("/refund-payment", RefundPaymentHandler)
+	app.Post("/cancel-order", CancelOrderHandler)
+
+	app.Get("/orders", GetOrdersHandler)
+}
+
 func main() {
 	// Initialize zerolog logger
 	log = zerolog.New(os.Stdout).With().Timestamp().Logger()
@@ -123,657 +671,7 @@ func main() {
 		return c.Next()
 	})
 
-	// Cart Creation Endpoint (POST)
-	app.Post("/create-cart", func(c *fiber.Ctx) error {
-		var cartReq CartRequest
-
-		// Parse the JSON input for cart creation
-		if err := c.BodyParser(&cartReq); err != nil {
-			log.Warn().Msg("Invalid JSON input for /create-cart")
-			return c.Status(400).JSON(fiber.Map{
-				"error": fiber.Map{
-					"code":    "InvalidRequest",
-					"message": "Invalid JSON payload",
-				},
-			})
-		}
-
-		// Validate cart input
-		if cartReq.CustomerID == "" || len(cartReq.Items) == 0 {
-			log.Warn().Msg("Customer ID or items missing in /create-cart request")
-			return c.Status(400).JSON(fiber.Map{
-				"error": fiber.Map{
-					"code":    "InvalidRequest",
-					"message": "Customer ID and items are required",
-				},
-			})
-		}
-
-		// Create or update the cart for the customer
-		carts[cartReq.CustomerID] = &Cart{
-			CartID:     uuid.New().String(),
-			CustomerID: cartReq.CustomerID,
-			Items:      cartReq.Items,
-		}
-
-		log.Info().Str("event.action", "create_cart").
-			Str("customer.id", cartReq.CustomerID).
-			Msg("Cart created successfully")
-
-		return c.JSON(fiber.Map{
-			"message": "Cart created successfully",
-			"cart":    carts[cartReq.CustomerID],
-		})
-	})
-
-	// Get all orders (GET)
-	app.Get("/orders", func(c *fiber.Ctx) error {
-		// If no orders are available, return an empty list
-		if len(orders) == 0 {
-			log.Info().Msg("No orders available")
-			return c.JSON(fiber.Map{
-				"message": "No orders found",
-				"orders":  []Order{},
-			})
-		}
-
-		// Return all the orders in a JSON response
-		log.Info().Msg("Fetching all orders")
-		return c.JSON(fiber.Map{
-			"message": "All orders retrieved successfully",
-			"orders":  orders,
-		})
-	})
-
-	// Process Payment Endpoint
-	app.Post("/process-payment", func(c *fiber.Ctx) error {
-		var paymentReq PaymentRequest
-
-		// Parse JSON input
-		if err := c.BodyParser(&paymentReq); err != nil {
-			log.Warn().Msg("Invalid JSON input for /process-payment")
-			return c.Status(400).JSON(fiber.Map{
-				"error": fiber.Map{
-					"code":    "InvalidRequest",
-					"message": "Invalid JSON payload",
-				},
-			})
-		}
-
-		// Validate payment input
-		if paymentReq.Amount <= 0 ||
-			paymentReq.BillingAddress.CustomerID == "" ||
-			paymentReq.BillingAddress.Name == "" ||
-			paymentReq.BillingAddress.Email == "" ||
-			paymentReq.BillingAddress.Phone == "" {
-			log.Warn().Msg("Invalid parameters for /process-payment")
-			return c.Status(400).JSON(fiber.Map{
-				"error": fiber.Map{
-					"code":    "InvalidRequest",
-					"message": "Billing details and valid amount are required",
-				},
-			})
-		}
-
-		// Retrieve cart associated with the billing address
-		cart, exists := carts[paymentReq.BillingAddress.CustomerID]
-		if !exists {
-			log.Warn().Msgf("Cart for customer ID %s not found", paymentReq.BillingAddress.CustomerID)
-			return c.Status(404).JSON(fiber.Map{
-				"error": fiber.Map{
-					"code":    "CartNotFound",
-					"message": "Cart for the given customer ID not found",
-				},
-			})
-		}
-
-		// Calculate total cart amount
-		var totalAmount float64
-		for _, item := range cart.Items {
-			totalAmount += float64(item.Quantity) * item.Price
-		}
-
-		// Check if the total amount matches the payment amount
-		if totalAmount != paymentReq.Amount {
-			log.Warn().Msgf("Payment amount mismatch: expected %.2f, received %.2f", totalAmount, paymentReq.Amount)
-			return c.Status(400).JSON(fiber.Map{
-				"error": fiber.Map{
-					"code":    "AmountMismatch",
-					"message": "The payment amount does not match the total cart amount",
-				},
-			})
-		}
-
-		// If amounts match, process payment (In real-world scenario, integrate with payment gateway)
-		log.Info().Str("event.action", "process_payment").
-			Str("customer.id", paymentReq.BillingAddress.CustomerID).
-			Float64("amount", paymentReq.Amount).
-			Msg("Payment processed successfully")
-
-		// Create the order after successful payment
-		orderID := paymentReq.OrderID // Example, should be unique
-
-		// Convert cart.Items (of type []Item) to []OrderItem
-		orderItems := make([]OrderItem, len(cart.Items))
-		for i, item := range cart.Items {
-			orderItems[i] = OrderItem{
-				ItemID:   item.ItemID,
-				Name:     item.Name,
-				Quantity: item.Quantity,
-				Price:    item.Price,
-			}
-		}
-
-		orders[orderID] = &Order{
-			ID:          orderID,
-			Status:      "Payment Processed",
-			Amount:      totalAmount,
-			Items:       orderItems, // Use the converted orderItems
-			PaymentDone: true,
-			Customer:    paymentReq.BillingAddress,
-			ProcessedBy: "System",
-		}
-
-		return c.JSON(fiber.Map{
-			"message": "Payment processed successfully and order created",
-			"order":   orders[orderID],
-		})
-	})
-
-	// Create Order Endpoint (POST)
-	app.Post("/create-order", func(c *fiber.Ctx) error {
-		// Parse JSON input
-		var orderReq CreateOrderRequest
-		if err := c.BodyParser(&orderReq); err != nil {
-			log.Warn().Msg("Invalid JSON input")
-			return c.Status(400).JSON(fiber.Map{
-				"error": fiber.Map{
-					"code":    "InvalidRequest",
-					"message": "Invalid JSON payload",
-				},
-			})
-		}
-
-		// Validate the create order request with specific messages
-		if orderReq.OrderID == "" {
-			log.Warn().Msg("Order ID is missing")
-			return c.Status(400).JSON(fiber.Map{
-				"error": fiber.Map{
-					"code":    "InvalidRequest",
-					"message": "Order ID is required",
-					"target":  "order_id",
-				},
-			})
-		}
-		if orderReq.BillingAddress.Name == "" {
-			log.Warn().Msg("Billing address name is missing")
-			return c.Status(400).JSON(fiber.Map{
-				"error": fiber.Map{
-					"code":    "InvalidRequest",
-					"message": "Billing address name is required",
-					"target":  "billing_address.name",
-				},
-			})
-		}
-		if orderReq.BillingAddress.Email == "" {
-			log.Warn().Msg("Billing address email is missing")
-			return c.Status(400).JSON(fiber.Map{
-				"error": fiber.Map{
-					"code":    "InvalidRequest",
-					"message": "Billing address email is required",
-					"target":  "billing_address.email",
-				},
-			})
-		}
-		if orderReq.BillingAddress.Phone == "" {
-			log.Warn().Msg("Billing address phone is missing")
-			return c.Status(400).JSON(fiber.Map{
-				"error": fiber.Map{
-					"code":    "InvalidRequest",
-					"message": "Billing address phone is required",
-					"target":  "billing_address.phone",
-				},
-			})
-		}
-		if len(orderReq.Items) == 0 {
-			log.Warn().Msg("No items found in the order")
-			return c.Status(400).JSON(fiber.Map{
-				"error": fiber.Map{
-					"code":    "InvalidRequest",
-					"message": "At least one item is required in the order",
-					"target":  "items",
-				},
-			})
-		}
-
-		// Check if order already exists
-		if _, exists := orders[orderReq.OrderID]; exists {
-			log.Warn().Msgf("Order ID %s already exists", orderReq.OrderID)
-			return c.Status(400).JSON(fiber.Map{
-				"error": fiber.Map{
-					"code":    "OrderAlreadyExists",
-					"message": "The order ID already exists.",
-					"target":  "order_id",
-				},
-			})
-		}
-
-		// Calculate total amount for the order
-		var totalAmount float64
-		for _, item := range orderReq.Items {
-			totalAmount += float64(item.Quantity) * item.Price
-		}
-
-		// Create Order (in a real-world scenario, you'd save this to a database)
-		orders[orderReq.OrderID] = &Order{
-			ID:          orderReq.OrderID,
-			Status:      "Order Created",
-			Amount:      totalAmount,
-			Items:       orderReq.Items,
-			PaymentDone: false,
-			Customer:    orderReq.BillingAddress,
-			ProcessedBy: "System", // Can be changed to the name of the employee processing the order
-		}
-
-		// Log successful order creation
-		log.Info().
-			Str("event.action", "create_order").
-			Str("order.id", orderReq.OrderID).
-			Str("customer.id", orderReq.BillingAddress.Email).
-			Float64("amount", totalAmount).
-			Msg("Order created successfully")
-
-		return c.JSON(fiber.Map{
-			"message": "Order created successfully",
-			"order":   orders[orderReq.OrderID],
-		})
-	})
-
-	// Wait for a grace period (Simulating with sleep)
-	app.Post("/wait-grace-period", func(c *fiber.Ctx) error {
-		// Get the order ID from the query parameter
-		orderID := c.Query("order_id")
-		if orderID == "" {
-			return c.Status(400).JSON(fiber.Map{
-				"error": fiber.Map{
-					"code":    "InvalidRequest",
-					"message": "Order ID is required",
-				},
-			})
-		}
-
-		// Check if order exists
-		order, exists := orders[orderID]
-		if !exists {
-			return c.Status(404).JSON(fiber.Map{
-				"error": fiber.Map{
-					"code":    "OrderNotFound",
-					"message": "Order not found",
-				},
-			})
-		}
-
-		// Simulate a grace period (e.g., 5 seconds)
-		log.Info().Str("order.id", orderID).Msg("Starting grace period for order")
-		time.Sleep(5 * time.Second) // You can change this to a configurable time
-
-		// Update the order status after grace period
-		order.Status = "Grace Period Completed"
-
-		log.Info().Str("order.id", orderID).Msg("Grace period completed for order")
-
-		// Return the updated order
-		return c.JSON(fiber.Map{
-			"message": "Grace period completed, order ready for routing",
-			"order":   order,
-		})
-	})
-
-	// Route Order Endpoint (POST)
-	app.Post("/route-order", func(c *fiber.Ctx) error {
-		// Parse JSON input
-		var payload map[string]string
-		if err := c.BodyParser(&payload); err != nil {
-			log.Warn().Msg("Invalid JSON input")
-			return c.Status(400).JSON(fiber.Map{
-				"error": fiber.Map{
-					"code":    "InvalidRequest",
-					"message": "Invalid JSON payload",
-				},
-			})
-		}
-
-		orderID := payload["order_id"]
-		if orderID == "" {
-			log.Warn().Msg("Order ID is missing in the route order request")
-			return c.Status(400).JSON(fiber.Map{
-				"error": fiber.Map{
-					"code":    "MissingOrderID",
-					"message": "Order ID is required to route the order.",
-				},
-			})
-		}
-
-		// Check if order exists
-		order, exists := orders[orderID]
-		if !exists {
-			log.Warn().Msgf("Order ID %s not found", orderID)
-			return c.Status(404).JSON(fiber.Map{
-				"error": fiber.Map{
-					"code":    "OrderNotFound",
-					"message": "The order ID provided does not exist.",
-					"target":  "order_id",
-					"details": fiber.Map{
-						"order_id": orderID,
-					},
-				},
-			})
-		}
-
-		// Simulate routing success or failure
-		success := true // This would be replaced by real routing logic
-		if success {
-			order.Status = "Order Routed"
-			log.Info().Msgf("Order ID %s successfully routed", orderID)
-			return c.JSON(fiber.Map{
-				"message": "Order routed",
-				"order":   order,
-			})
-		} else {
-			order.Status = "Routing Failed"
-			log.Warn().Msgf("Routing failed for Order ID %s", orderID)
-			return c.JSON(fiber.Map{
-				"message": "Routing failed, items on hold",
-				"order":   order,
-			})
-		}
-	})
-
-	// Process Fulfillment (Store/DC)
-	app.Post("/fulfill-order", func(c *fiber.Ctx) error {
-		// Parse JSON input
-		var payload map[string]string
-		if err := c.BodyParser(&payload); err != nil {
-			log.Warn().Msg("Invalid JSON input for fulfillment")
-			return c.Status(400).JSON(fiber.Map{
-				"error": fiber.Map{
-					"code":    "InvalidRequest",
-					"message": "Invalid JSON payload",
-				},
-			})
-		}
-
-		orderID := payload["order_id"]
-		if orderID == "" {
-			log.Warn().Msg("Order ID is missing for fulfillment")
-			return c.Status(400).JSON(fiber.Map{
-				"error": fiber.Map{
-					"code":    "MissingOrderID",
-					"message": "Order ID is required to process fulfillment.",
-				},
-			})
-		}
-
-		// Check if order exists and has been routed
-		order, exists := orders[orderID]
-		if !exists {
-			log.Warn().Msgf("Order ID %s not found for fulfillment", orderID)
-			return c.Status(404).JSON(fiber.Map{
-				"error": fiber.Map{
-					"code":    "OrderNotFound",
-					"message": "The order ID provided does not exist.",
-					"target":  "order_id",
-				},
-			})
-		}
-
-		// Ensure the order has been routed before fulfillment
-		if order.Status != "Order Routed" {
-			log.Warn().Msgf("Order ID %s has not been routed", orderID)
-			return c.Status(400).JSON(fiber.Map{
-				"error": fiber.Map{
-					"code":    "OrderNotRouted",
-					"message": "The order must be routed before fulfillment.",
-					"target":  "order_id",
-				},
-			})
-		}
-
-		// Simulate fulfillment
-		order.Status = "Fulfillment Completed"
-		order.Fulfilled = true
-
-		// Log successful fulfillment
-		log.Info().
-			Str("event.action", "fulfill_order").
-			Str("order.id", orderID).
-			Msg("Order fulfilled successfully")
-
-		return c.JSON(fiber.Map{
-			"message": "Order fulfilled",
-			"order":   order,
-		})
-	})
-
-	// Capture Payment after fulfillment (POST)
-	app.Post("/capture-payment", func(c *fiber.Ctx) error {
-		// Parse JSON input
-		var payload map[string]string
-		if err := c.BodyParser(&payload); err != nil {
-			log.Warn().Msg("Invalid JSON input for payment capture")
-			return c.Status(400).JSON(fiber.Map{
-				"error": fiber.Map{
-					"code":    "InvalidRequest",
-					"message": "Invalid JSON payload",
-				},
-			})
-		}
-
-		orderID := payload["order_id"]
-		if orderID == "" {
-			log.Warn().Msg("Order ID is missing for payment capture")
-			return c.Status(400).JSON(fiber.Map{
-				"error": fiber.Map{
-					"code":    "MissingOrderID",
-					"message": "Order ID is required to capture the payment.",
-				},
-			})
-		}
-
-		// Check if order exists
-		order, exists := orders[orderID]
-		if !exists {
-			log.Warn().Msgf("Order ID %s not found for payment capture", orderID)
-			return c.Status(404).JSON(fiber.Map{
-				"error": fiber.Map{
-					"code":    "OrderNotFound",
-					"message": "The order ID provided does not exist.",
-					"target":  "order_id",
-				},
-			})
-		}
-
-		// Ensure the order is fulfilled before capturing payment
-		if !order.Fulfilled {
-			log.Warn().Msgf("Order ID %s has not been fulfilled yet", orderID)
-			return c.Status(400).JSON(fiber.Map{
-				"error": fiber.Map{
-					"code":    "OrderNotFulfilled",
-					"message": "The order must be fulfilled before capturing payment.",
-					"target":  "order_id",
-				},
-			})
-		}
-
-		// Capture the payment
-		order.Status = "Payment Captured"
-		order.PaymentDone = true
-
-		// Log successful payment capture
-		log.Info().
-			Str("event.action", "capture_payment").
-			Str("order.id", orderID).
-			Msg("Payment captured successfully")
-
-		return c.JSON(fiber.Map{
-			"message": "Payment captured",
-			"order":   order,
-		})
-	})
-
-	// Handle Refunds (POST)
-	app.Post("/refund-payment", func(c *fiber.Ctx) error {
-		// Parse JSON input
-		var payload map[string]string
-		if err := c.BodyParser(&payload); err != nil {
-			log.Warn().Msg("Invalid JSON input for refund payment")
-			return c.Status(400).JSON(fiber.Map{
-				"error": fiber.Map{
-					"code":    "InvalidRequest",
-					"message": "Invalid JSON payload",
-				},
-			})
-		}
-
-		orderID := payload["order_id"]
-		if orderID == "" {
-			log.Warn().Msg("Order ID is missing for refund payment")
-			return c.Status(400).JSON(fiber.Map{
-				"error": fiber.Map{
-					"code":    "MissingOrderID",
-					"message": "Order ID is required to process the refund.",
-				},
-			})
-		}
-
-		// Check if order exists
-		order, exists := orders[orderID]
-		if !exists {
-			log.Warn().Msgf("Order ID %s not found for refund", orderID)
-			return c.Status(404).JSON(fiber.Map{
-				"error": fiber.Map{
-					"code":    "OrderNotFound",
-					"message": "The order ID provided does not exist.",
-					"target":  "order_id",
-				},
-			})
-		}
-
-		// Check if payment has been made and the refund has not already been processed
-		if !order.PaymentDone {
-			log.Warn().Msgf("Payment was not processed for Order ID %s", orderID)
-			return c.Status(400).JSON(fiber.Map{
-				"error": fiber.Map{
-					"code":    "PaymentNotProcessed",
-					"message": "Payment has not been processed for this order.",
-					"target":  "order_id",
-				},
-			})
-		}
-
-		if order.Refunded {
-			log.Warn().Msgf("Payment has already been refunded for Order ID %s", orderID)
-			return c.Status(400).JSON(fiber.Map{
-				"error": fiber.Map{
-					"code":    "PaymentAlreadyRefunded",
-					"message": "Payment has already been refunded for this order.",
-					"target":  "order_id",
-				},
-			})
-		}
-
-		// Refund the payment
-		order.Status = "Payment Refunded"
-		order.Refunded = true
-
-		// Log successful refund
-		log.Info().
-			Str("event.action", "refund_payment").
-			Str("order.id", orderID).
-			Msg("Payment refunded successfully")
-
-		return c.JSON(fiber.Map{
-			"message": "Payment refunded",
-			"order":   order,
-		})
-	})
-
-	// Order Cancellation (POST)
-	app.Post("/cancel-order", func(c *fiber.Ctx) error {
-		// Parse JSON input
-		var payload map[string]string
-		if err := c.BodyParser(&payload); err != nil {
-			log.Warn().Msg("Invalid JSON input for order cancellation")
-			return c.Status(400).JSON(fiber.Map{
-				"error": fiber.Map{
-					"code":    "InvalidRequest",
-					"message": "Invalid JSON payload",
-				},
-			})
-		}
-
-		orderID := payload["order_id"]
-		if orderID == "" {
-			log.Warn().Msg("Order ID is missing for cancellation")
-			return c.Status(400).JSON(fiber.Map{
-				"error": fiber.Map{
-					"code":    "MissingOrderID",
-					"message": "Order ID is required to cancel the order.",
-				},
-			})
-		}
-
-		// Check if order exists
-		order, exists := orders[orderID]
-		if !exists {
-			log.Warn().Msgf("Order ID %s not found for cancellation", orderID)
-			return c.Status(404).JSON(fiber.Map{
-				"error": fiber.Map{
-					"code":    "OrderNotFound",
-					"message": "The order ID provided does not exist.",
-					"target":  "order_id",
-				},
-			})
-		}
-
-		// Check if order is already fulfilled or cancelled
-		if order.Fulfilled {
-			log.Warn().Msgf("Order ID %s has already been fulfilled and cannot be cancelled", orderID)
-			return c.Status(400).JSON(fiber.Map{
-				"error": fiber.Map{
-					"code":    "OrderAlreadyFulfilled",
-					"message": "The order has already been fulfilled and cannot be cancelled.",
-					"target":  "order_id",
-				},
-			})
-		}
-
-		if order.Cancelled {
-			log.Warn().Msgf("Order ID %s has already been cancelled", orderID)
-			return c.Status(400).JSON(fiber.Map{
-				"error": fiber.Map{
-					"code":    "OrderAlreadyCancelled",
-					"message": "The order has already been cancelled.",
-					"target":  "order_id",
-				},
-			})
-		}
-
-		// Cancel the order
-		order.Status = "Order Cancelled"
-		order.Cancelled = true
-
-		// Log successful cancellation
-		log.Info().
-			Str("event.action", "cancel_order").
-			Str("order.id", orderID).
-			Msg("Order cancelled successfully")
-
-		return c.JSON(fiber.Map{
-			"message": "Order cancelled",
-			"order":   order,
-		})
-	})
+	setupRoutes(app)
 
 	// Graceful shutdown on SIGTERM or SIGINT
 	go func() {
