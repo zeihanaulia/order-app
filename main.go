@@ -207,12 +207,7 @@ func ProcessPaymentHandler(c *fiber.Ctx) error {
 	// Convert cart.Items (of type []Item) to []OrderItem
 	orderItems := make([]OrderItem, len(cart.Items))
 	for i, item := range cart.Items {
-		orderItems[i] = OrderItem{
-			ItemID:   item.ItemID,
-			Name:     item.Name,
-			Quantity: item.Quantity,
-			Price:    item.Price,
-		}
+		orderItems[i] = OrderItem(item) // Simple type conversion
 	}
 
 	orders[orderID] = &Order{
@@ -665,7 +660,10 @@ func main() {
 					Bytes("error.stack_trace", stackBuf).
 					Msgf("Panic: %v", r)
 
-				c.Status(500).SendString("Internal Server Error")
+				if err := c.Status(500).SendString("Internal Server Error"); err != nil {
+					log.Error().Err(err).Msg("Failed to send response")
+				}
+
 			}
 		}()
 		return c.Next()
